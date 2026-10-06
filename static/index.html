@@ -1,18 +1,152 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>水资源权配置</title>
-<style>body{font:15px/1.5 system-ui,sans-serif;max-width:980px;margin:32px auto;padding:0 18px}input,select,button{padding:7px;margin:3px}.card{border:1px solid #d9e1e8;border-radius:10px;padding:16px;margin:16px 0}pre{background:#f5f7f9;padding:12px;overflow:auto}small{color:#667}button{cursor:pointer}</style></head>
-<body><h1>跨区域水资源使用权</h1><p>示例账户初始化后，可查看余额、发起转让、审核，并模拟干旱分配。</p>
-<div class="card"><h2>身份</h2><input id="user" value="alice"><select id="role"><option>editor</option><option>reviewer</option><option>meter</option><option>viewer</option></select></div>
-<div class="card"><h2>账户</h2><button onclick="getAccounts()">刷新账户</button><pre id="accounts">等待操作…</pre></div>
-<div class="card"><h2>发起转让</h2><input id="from" type="number" value="1" placeholder="转出账户"><input id="to" type="number" value="2" placeholder="转入账户"><input id="amount" type="number" value="400"><input id="date" type="date" value="2026-06-01"><button onclick="transfer()">提交审批</button><pre id="result"></pre></div>
-<div class="card"><h2>审批最新转让</h2><input id="transfer_id" type="number" placeholder="转让 ID"><button onclick="approve()">批准</button><button onclick="reject()">退回</button></div>
-<div class="card"><h2>干旱情景</h2><input id="supply" type="number" value="1200"><input id="reduction" type="number" value="0.3" step="0.1"><button onclick="simulate()">模拟</button><pre id="drought">等待操作…</pre></div>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>水资源权配置与质押登记</title>
+<style>
+body{font:15px/1.5 system-ui,sans-serif;max-width:1040px;margin:32px auto;padding:0 18px;color:#1f2d3d}
+input,select,button{padding:7px;margin:3px}
+.card{border:1px solid #d9e1e8;border-radius:10px;padding:16px;margin:16px 0}
+pre{background:#f5f7f9;padding:12px;overflow:auto;border-radius:8px}
+small{color:#667}
+button{cursor:pointer;border:1px solid #8aa4bd;background:#eef4fa;border-radius:6px}
+button:hover{background:#dce9f5}
+table{border-collapse:collapse;width:100%}
+th,td{border:1px solid #d9e1e8;padding:6px 9px;text-align:left;font-size:14px}
+th{background:#f0f4f8}
+.tag{display:inline-block;padding:1px 8px;border-radius:10px;font-size:12px}
+.pledged{background:#fff4e0;color:#9a6200}
+.frozen{background:#fde8e8;color:#a11}
+.transferred{background:#e6f6ea;color:#1a7f37}
+.released{background:#eceff3;color:#556}
+.pending{background:#e7f0fb;color:#175199}
+h2{margin-top:0}
+</style></head>
+<body>
+<h1>跨区域水资源使用权 · 担保登记</h1>
+<p>同一额度不能同时被质押、待审转让和取水占用；窗口并发提交时只有一方成功。到期未履约可由受益人申请处置，处置单先冻结额度，再按审批结果转让或释放，失败可凭同一处置单重试。</p>
+
+<div class="card"><h2>身份</h2>
+<input id="user" value="alice">
+<select id="role"><option>editor</option><option>reviewer</option><option>meter</option><option>viewer</option></select>
+<button onclick="refreshAll()">刷新全部</button>
+</div>
+
+<div class="card"><h2>账户额度明细</h2>
+<table><thead><tr><th>ID</th><th>账户</th><th>持有人</th><th>许可额度</th><th>已取水</th><th>待审转让</th><th>质押中</th><th>待处置（冻结）</th><th>可用</th></tr></thead>
+<tbody id="accountRows"><tr><td colspan="9" style="text-align:center;color:#889">点击“刷新全部”加载</td></tr></tbody></table>
+<div id="accountDetails"></div>
+</div>
+
+<div class="card"><h2>提交质押</h2>
+<input id="pledgeAccount" type="number" placeholder="账户 ID" value="1">
+<input id="pledgeAmount" type="number" placeholder="质押金额" value="200">
+<input id="pledgeMaturity" type="date" value="2026-10-01">
+<input id="pledgeBeneficiary" placeholder="受益人" value="河口合作社">
+<button onclick="createPledge()">提交质押</button>
+<pre id="pledgeResult">等待操作…</pre>
+</div>
+
+<div class="card"><h2>质押与待处置明细</h2>
+<table><thead><tr><th>ID</th><th>账户</th><th>金额</th><th>到期日</th><th>受益人</th><th>状态</th><th>处置单</th></tr></thead>
+<tbody id="pledgeRows"></tbody></table>
+</div>
+
+<div class="card"><h2>到期处置（受益人申请）</h2>
+<input id="disposalPledge" type="number" placeholder="质押 ID">
+<button onclick="fileDisposal()">申请处置并冻结额度</button>
+<pre id="disposalResult">等待操作…</pre>
+</div>
+
+<div class="card"><h2>处置审批</h2>
+<input id="disposalId" type="number" placeholder="处置单 ID">
+<input id="disposalTarget" type="number" placeholder="批准转让→受益人账户 ID（留空则释放）">
+<button onclick="decideDisposal('transfer')">批准并转让</button>
+<button onclick="decideDisposal('release')">释放</button>
+<pre id="decisionResult">等待操作…</pre>
+<small>转让/释放与扣减在同一事务；写入失败后可用同一处置单重试，不会重复扣减。</small>
+</div>
+
+<div class="card"><h2>发起转让</h2>
+<input id="from" type="number" value="1" placeholder="转出账户"><input id="to" type="number" value="2" placeholder="转入账户">
+<input id="amount" type="number" value="100"><input id="date" type="date" value="2026-06-01">
+<button onclick="transfer()">提交审批</button><pre id="result"></pre>
+</div>
+<div class="card"><h2>转让审批 / 计量 / 干旱情景</h2>
+<input id="transfer_id" type="number" placeholder="转让 ID"><button onclick="approve()">批准转让</button><button onclick="reject()">退回转让</button>
+<hr>
+<input id="usageAccount" type="number" placeholder="账户 ID"><input id="usageAmount" type="number" placeholder="取水量">
+<input id="usageEvent" placeholder="计量事件号"><input id="usageDate" type="date" value="2026-08-01">
+<button onclick="usage()">登记取水</button>
+<hr>
+<input id="supply" type="number" value="1200"><input id="reduction" type="number" value="0.3" step="0.1">
+<button onclick="simulate()">干旱模拟</button>
+<pre id="drought">等待操作…</pre>
+</div>
+
 <script>
-const headers=()=>({'Content-Type':'application/json','X-User':user.value,'X-Role':role.value});
+const $=id=>document.getElementById(id);
+const headers=()=>({'Content-Type':'application/json','X-User':$('user').value,'X-Role':$('role').value});
 async function call(url,opts={}){const r=await fetch(url,opts);const j=await r.json();if(!r.ok)throw Error(j.error||r.status);return j}
-async function getAccounts(){try{accounts.textContent=JSON.stringify(await call('/api/accounts'),null,2)}catch(e){accounts.textContent=e.message}}
-async function transfer(){try{result.textContent=JSON.stringify(await call('/api/transfers',{method:'POST',headers:headers(),body:JSON.stringify({from_account_id:+from.value,to_account_id:+to.value,amount:+amount.value,effective_date:date.value})}),null,2)}catch(e){result.textContent=e.message}}
-async function approve(){try{result.textContent=JSON.stringify(await call('/api/transfers/'+transfer_id.value+'/approve',{method:'POST',headers:headers(),body:'{}'}),null,2)}catch(e){result.textContent=e.message}}
-async function reject(){try{result.textContent=JSON.stringify(await call('/api/transfers/'+transfer_id.value+'/reject',{method:'POST',headers:headers(),body:'{}'}),null,2)}catch(e){result.textContent=e.message}}
-async function simulate(){try{drought.textContent=JSON.stringify(await call('/api/drought/simulate?supply='+supply.value+'&reduction='+reduction.value),null,2)}catch(e){drought.textContent=e.message}}
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const tagCls={pledged:'pledged',frozen:'frozen',transferred:'transferred',released:'released',applied:'pending',pending:'pending',approved:'transferred',rejected:'released'};
+function tag(s){return `<span class="tag ${tagCls[s]||''}">${esc(s)}</span>`}
+const money=v=>(+v).toFixed(2).replace(/\.00$/,'');
+
+async function refreshAll(){
+  await Promise.all([getAccounts(),getPledges()]);
+}
+async function getAccounts(){
+  const {accounts}=await call('/api/accounts');
+  $('accountRows').innerHTML=accounts.map(a=>`<tr>
+    <td>${a.id}</td><td><a href="#" onclick="getDetail(${a.id});return false">${esc(a.name)}</a></td>
+    <td>${esc(a.holder)}</td><td>${money(a.quota)}</td><td>${money(a.used)}</td>
+    <td>${money(a.pending_transfer)}</td><td>${money(a.pledged)}</td><td>${money(a.frozen)}</td>
+    <td><b>${money(a.available)}</b></td></tr>`).join('');
+  await Promise.all(accounts.map(a=>getDetail(a.id)));
+}
+async function getDetail(id){
+  const d=await call('/api/accounts/'+id);
+  const lines=(d.pledges||[]).map(p=>{
+    const dis=p.disposal?`处置单 #${p.disposal.id} ${tag(p.disposal.status)}${p.disposal.decision?' · '+esc(p.disposal.decision):''}`:'—';
+    return `质押 #${p.id}：${money(p.amount)}，到期 ${p.maturity_date}，受益人 ${esc(p.beneficiary)}，${tag(p.status)}；${dis}`;
+  });
+  const el=document.createElement('div');
+  el.id='detail-'+id;
+  el.innerHTML=`<h3>${esc(d.name)} · 质押/处置明细</h3><pre>${esc(lines.join('\n')||'无质押记录（按未质押兼容）')}</pre>`;
+  const old=$('detail-'+id); if(old) old.remove();
+  $('accountDetails').appendChild(el);
+}
+async function getPledges(){
+  const {pledges}=await call('/api/pledges');
+  $('pledgeRows').innerHTML=pledges.map(p=>`<tr><td>${p.id}</td><td>${p.account_id}</td><td>${money(p.amount)}</td>
+    <td>${p.maturity_date}</td><td>${esc(p.beneficiary)}</td><td>${tag(p.status)}</td>
+    <td>${p.status==='frozen'||p.status==='transferred'||p.status==='released'?'见处置列表':'—'}</td></tr>`).join('');
+}
+async function createPledge(){
+  try{$('pledgeResult').textContent=JSON.stringify(await call('/api/pledges',{method:'POST',headers:headers(),
+    body:JSON.stringify({account_id:+$('pledgeAccount').value,amount:+$('pledgeAmount').value,
+      maturity_date:$('pledgeMaturity').value,beneficiary:$('pledgeBeneficiary').value})}),null,2);await refreshAll()}
+  catch(e){$('pledgeResult').textContent=e.message}
+}
+async function fileDisposal(){
+  try{$('disposalResult').textContent=JSON.stringify(await call('/api/disposals',{method:'POST',headers:headers(),
+    body:JSON.stringify({pledge_id:+$('disposalPledge').value})}),null,2);await refreshAll()}
+  catch(e){$('disposalResult').textContent=e.message}
+}
+async function decideDisposal(decision){
+  const body={decision};
+  if(decision==='transfer'&&$('disposalTarget').value) body.transfer_to_account_id=+$('disposalTarget').value;
+  try{$('decisionResult').textContent=JSON.stringify(await call('/api/disposals/'+$('disposalId').value+'/'+(decision==='transfer'?'approve':'reject'),
+    {method:'POST',headers:headers(),body:JSON.stringify(body)}),null,2);await refreshAll()}
+  catch(e){$('decisionResult').textContent=e.message}
+}
+async function transfer(){try{$('result').textContent=JSON.stringify(await call('/api/transfers',{method:'POST',headers:headers(),
+  body:JSON.stringify({from_account_id:+from.value,to_account_id:+to.value,amount:+amount.value,effective_date:date.value})}),null,2);await refreshAll()}
+  catch(e){$('result').textContent=e.message}}
+async function approve(){try{$('result').textContent=JSON.stringify(await call('/api/transfers/'+transfer_id.value+'/approve',{method:'POST',headers:headers(),body:'{}'}),null,2);await refreshAll()}catch(e){$('result').textContent=e.message}}
+async function reject(){try{$('result').textContent=JSON.stringify(await call('/api/transfers/'+transfer_id.value+'/reject',{method:'POST',headers:headers(),body:'{}'}),null,2);await refreshAll()}catch(e){$('result').textContent=e.message}}
+async function usage(){try{$('result').textContent=JSON.stringify(await call('/api/usage',{method:'POST',headers:headers(),
+  body:JSON.stringify({account_id:+$('usageAccount').value,amount:+$('usageAmount').value,
+    meter_event_id:$('usageEvent').value,occurred_at:$('usageDate').value})}),null,2);await refreshAll()}
+  catch(e){$('result').textContent=e.message}}
+async function simulate(){try{$('drought').textContent=JSON.stringify(await call('/api/drought/simulate?supply='+supply.value+'&reduction='+reduction.value),null,2)}catch(e){$('drought').textContent=e.message}}
+refreshAll();
 </script></body></html>
