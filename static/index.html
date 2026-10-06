@@ -1,11 +1,20 @@
 <!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>水资源权配置</title>
 <style>body{font:15px/1.5 system-ui,sans-serif;max-width:980px;margin:32px auto;padding:0 18px}input,select,button{padding:7px;margin:3px}.card{border:1px solid #d9e1e8;border-radius:10px;padding:16px;margin:16px 0}pre{background:#f5f7f9;padding:12px;overflow:auto}small{color:#667}button{cursor:pointer}</style></head>
-<body><h1>跨区域水资源使用权</h1><p>示例账户初始化后，可查看余额、发起转让、审核，并模拟干旱分配。</p>
+<body><h1>跨区域水资源使用权</h1><p>示例账户初始化后，可查看余额、发起转让、审核、登记质押担保与处置，并模拟干旱分配。</p>
 <div class="card"><h2>身份</h2><input id="user" value="alice"><select id="role"><option>editor</option><option>reviewer</option><option>meter</option><option>viewer</option></select></div>
-<div class="card"><h2>账户</h2><button onclick="getAccounts()">刷新账户</button><pre id="accounts">等待操作…</pre></div>
+<div class="card"><h2>账户</h2><button onclick="getAccounts()">刷新账户</button><small>available 可用、pledged 质押中、frozen 待处置冻结、reserved_outgoing 待审转让预占。</small><pre id="accounts">等待操作…</pre></div>
 <div class="card"><h2>发起转让</h2><input id="from" type="number" value="1" placeholder="转出账户"><input id="to" type="number" value="2" placeholder="转入账户"><input id="amount" type="number" value="400"><input id="date" type="date" value="2026-06-01"><button onclick="transfer()">提交审批</button><pre id="result"></pre></div>
 <div class="card"><h2>审批最新转让</h2><input id="transfer_id" type="number" placeholder="转让 ID"><button onclick="approve()">批准</button><button onclick="reject()">退回</button></div>
+<div class="card"><h2>质押登记</h2><small>填写金额、到期日和受益人；同一额度不能同时被质押、待审转让和取水占用，并发提交只有一方成功。</small><br>
+<input id="pl_account" type="number" value="1" placeholder="质押账户"><input id="pl_amount" type="number" value="100" placeholder="质押金额"><input id="pl_expires" type="date" value="2026-12-31"><input id="pl_beneficiary" value="河口合作社" placeholder="受益人"><button onclick="pledge()">提交质押</button><br>
+<input id="pl_release_id" type="number" placeholder="质押 ID"><button onclick="releasePledge()">履约解除</button>
+<pre id="pledge_result"></pre></div>
+<div class="card"><h2>质押处置</h2><small>到期未履约时由受益人申请处置（身份栏用户名需等于受益人），处置单先冻结质押额；审核人审批生成转让或释放，同一处置单重复审批返回原结果、不重复扣减。</small><br>
+<input id="dp_pledge" type="number" placeholder="质押 ID"><input id="dp_target" type="number" value="2" placeholder="接收账户"><button onclick="applyDisposal()">受益人申请处置</button><br>
+<input id="dp_id" type="number" placeholder="处置单 ID"><select id="dp_decision"><option value="transfer">转让</option><option value="release">释放</option></select><button onclick="decideDisposal()">审批处置</button>
+<pre id="disposal_result"></pre></div>
+<div class="card"><h2>质押与待处置明细</h2><button onclick="getCollateral()">刷新明细</button><pre id="collateral">等待操作…</pre></div>
 <div class="card"><h2>干旱情景</h2><input id="supply" type="number" value="1200"><input id="reduction" type="number" value="0.3" step="0.1"><button onclick="simulate()">模拟</button><pre id="drought">等待操作…</pre></div>
 <script>
 const headers=()=>({'Content-Type':'application/json','X-User':user.value,'X-Role':role.value});
@@ -14,5 +23,10 @@ async function getAccounts(){try{accounts.textContent=JSON.stringify(await call(
 async function transfer(){try{result.textContent=JSON.stringify(await call('/api/transfers',{method:'POST',headers:headers(),body:JSON.stringify({from_account_id:+from.value,to_account_id:+to.value,amount:+amount.value,effective_date:date.value})}),null,2)}catch(e){result.textContent=e.message}}
 async function approve(){try{result.textContent=JSON.stringify(await call('/api/transfers/'+transfer_id.value+'/approve',{method:'POST',headers:headers(),body:'{}'}),null,2)}catch(e){result.textContent=e.message}}
 async function reject(){try{result.textContent=JSON.stringify(await call('/api/transfers/'+transfer_id.value+'/reject',{method:'POST',headers:headers(),body:'{}'}),null,2)}catch(e){result.textContent=e.message}}
+async function pledge(){try{pledge_result.textContent=JSON.stringify(await call('/api/pledges',{method:'POST',headers:headers(),body:JSON.stringify({account_id:+pl_account.value,amount:+pl_amount.value,expires_on:pl_expires.value,beneficiary:pl_beneficiary.value})}),null,2)}catch(e){pledge_result.textContent=e.message}}
+async function releasePledge(){try{pledge_result.textContent=JSON.stringify(await call('/api/pledges/'+pl_release_id.value+'/release',{method:'POST',headers:headers(),body:'{}'}),null,2)}catch(e){pledge_result.textContent=e.message}}
+async function applyDisposal(){try{disposal_result.textContent=JSON.stringify(await call('/api/disposals',{method:'POST',headers:headers(),body:JSON.stringify({pledge_id:+dp_pledge.value,target_account_id:+dp_target.value})}),null,2)}catch(e){disposal_result.textContent=e.message}}
+async function decideDisposal(){try{disposal_result.textContent=JSON.stringify(await call('/api/disposals/'+dp_id.value+'/decide',{method:'POST',headers:headers(),body:JSON.stringify({decision:dp_decision.value})}),null,2)}catch(e){disposal_result.textContent=e.message}}
+async function getCollateral(){try{const[p,d]=await Promise.all([call('/api/pledges'),call('/api/disposals')]);collateral.textContent=JSON.stringify({pledges:p.pledges,disposals:d.disposals},null,2)}catch(e){collateral.textContent=e.message}}
 async function simulate(){try{drought.textContent=JSON.stringify(await call('/api/drought/simulate?supply='+supply.value+'&reduction='+reduction.value),null,2)}catch(e){drought.textContent=e.message}}
 </script></body></html>
